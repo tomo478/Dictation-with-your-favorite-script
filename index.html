@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>Dictation-with-your-favorite-script</title>
+  <title>Dictation Trainer Pro</title>
   <style>
     :root {
       --bg: #0a0c10;
@@ -89,24 +89,27 @@
       flex: 1; background: rgba(0, 0, 0, 0.2); border-radius: 16px;
       padding: 18px; overflow-y: auto; font-family: monospace;
       font-size: 18px; line-height: 1.8; margin-bottom: 15px; border: 1px solid var(--border);
-      cursor: text; /* どこを触っても入力できる雰囲気 */
+      cursor: text;
     }
     .snippet { white-space: pre-wrap; word-break: break-all; }
     .typed { color: var(--text-muted); opacity: 0.5; }
     .cursor { background: var(--accent-glow); border-bottom: 2px solid var(--accent); font-weight: bold; }
     .mask { color: rgba(255,255,255,0.15); }
 
-    /* Hidden input for mobile keyboard */
-    #hiddenInput { position: absolute; opacity: 0; pointer-events: none; }
+    /* Hidden Input Hack */
+    #hiddenInput { 
+      position: absolute; opacity: 0; pointer-events: none; 
+      top: 0; left: 0; width: 1px; height: 1px;
+    }
 
-    .choices-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .choices-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;}
     button { all: unset; cursor: pointer; padding: 12px; border-radius: 10px; font-weight: 600; font-size: 14px; text-align: center; transition: 0.2s; }
     .primary-btn { background: var(--accent); color: #000; width: 100%; }
     .choice-btn { background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
     .choice-btn.good { background: var(--good); color: #000; }
     .choice-btn.bad { background: var(--bad); }
 
-    .reveal-btn { width: 100%; text-align: center; font-size: 11px; color: var(--text-muted); border: 1px dashed var(--border); margin-bottom: 12px; }
+    .reveal-btn { width: 100%; text-align: center; font-size: 11px; color: var(--text-muted); border: 1px dashed var(--border); margin-bottom: 12px; padding: 8px 0;}
     .stats { display: flex; justify-content: space-around; margin-top: 15px; font-size: 12px; }
     .stat-val { font-weight: bold; color: var(--accent); margin-left: 4px; }
 
@@ -116,7 +119,6 @@
     input:checked + .toggle-item .switch::after { left: 16px; }
     input[type="checkbox"] { display: none; }
 
-    /* Animation for wrong type */
     .flash-bad { animation: flashBad 0.2s ease-in-out; }
     @keyframes flashBad {
       0% { background: transparent; }
@@ -128,7 +130,7 @@
 <body>
 
 <div class="app-wrap">
-  <div class="card" id="mainCard">
+  <div class="card">
     
     <div id="screenHome" class="screen active">
       <h2 style="text-align:center; margin-bottom:24px;">English Dictation</h2>
@@ -140,7 +142,7 @@
       <div class="mode-grid">
         <div class="mode-card" onclick="selectMode('dictation')">
           <h3>ディクテーション</h3>
-          <p>1文字ずつタイピング</p>
+          <p>1文字ずつ入力</p>
         </div>
         <div class="mode-card" onclick="selectMode('quiz')">
           <h3>4択クイズ</h3>
@@ -165,7 +167,8 @@
     </div>
 
     <div id="screenPractice" class="screen">
-      <input type="text" id="hiddenInput" autocomplete="off">
+      <input type="password" id="hiddenInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      
       <div class="progress-container"><div id="progressBar" class="progress-bar"></div></div>
       <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
         <button onclick="showScreen('setup')" style="font-size:12px;">← 設定に戻る</button>
@@ -174,9 +177,9 @@
 
       <div class="display-panel" id="displayPanel"><div id="snippet" class="snippet"></div></div>
       
-      <button id="revealBtn" class="reveal-btn">長押しで正解を表示 / タップでキーボード</button>
+      <button id="revealBtn" class="reveal-btn">長押しで正解を表示</button>
 
-      <div id="quizInputArea" style="display:none; margin-bottom: 10px;">
+      <div id="quizInputArea" style="display:none;">
         <div id="choices" class="choices-grid"></div>
       </div>
 
@@ -192,7 +195,7 @@
 
 <script>
 (() => {
-  const STORAGE_KEY = "script_trainer_v3";
+  const STORAGE_KEY = "dict_trainer_v4";
   let state = {
     mode: 'dictation',
     text: '', tokens: [], wordIndices: [],
@@ -215,6 +218,8 @@
     revealBtn: document.getElementById('revealBtn'),
     activeModeLabel: document.getElementById('activeModeLabel')
   };
+
+  let isRevealing = false;
 
   window.showScreen = (name) => {
     Object.keys(el.screens).forEach(k => el.screens[k].classList.toggle('active', k === name));
@@ -277,7 +282,6 @@
         skipWS(); 
         el.hiddenInput.focus();
     } else { 
-        // クイズモードの場合、最初の単語の開始位置にidxを合わせる
         if(state.wordIndices.length > 0) state.idx = state.tokens[state.wordIndices[0]].start;
         makeQuizQuestion(); 
     }
@@ -289,14 +293,23 @@
     while (state.idx < state.text.length && /\s/.test(state.text[state.idx])) state.idx++;
   }
 
-  // Handle Global Typing
-  window.addEventListener('keydown', (e) => {
-    if (state.mode !== 'dictation' || !el.screens.practice.classList.contains('active')) return;
-    if (e.key.length !== 1 && e.key !== "Enter") return;
+  // スマホの予測入力を防ぐための input イベント監視
+  el.hiddenInput.addEventListener('input', (e) => {
+    if (state.mode !== 'dictation' || isRevealing) {
+      el.hiddenInput.value = "";
+      return;
+    }
+    
+    const val = e.target.value;
+    if (!val) return;
 
-    const typed = e.key === "Enter" ? "\n" : e.key;
+    // 最後の1文字を判定対象にする
+    const typed = val.slice(-1);
     const target = state.text[state.idx];
-    if(!target) return;
+    if(!target) {
+        el.hiddenInput.value = "";
+        return;
+    }
 
     const a = state.options.caseSensitive ? typed : typed.toLowerCase();
     const b = state.options.caseSensitive ? target : target.toLowerCase();
@@ -308,11 +321,23 @@
       el.displayPanel.classList.add('flash-bad');
       setTimeout(() => el.displayPanel.classList.remove('flash-bad'), 200);
     }
+
+    // 常に空にすることで未確定文字を溜めない
+    el.hiddenInput.value = "";
     save(); updateUI();
   });
 
-  // Mobile Focus Helper
-  el.displayPanel.onclick = () => { if(state.mode === 'dictation') el.hiddenInput.focus(); };
+  // PCキーボード用
+  window.addEventListener('keydown', (e) => {
+    if (state.mode !== 'dictation' || !el.screens.practice.classList.contains('active')) return;
+    if (e.key === "Enter") {
+        const target = state.text[state.idx];
+        if (target === "\n") {
+            state.idx++; state.ok++; skipWS();
+            save(); updateUI();
+        }
+    }
+  });
 
   function makeQuizQuestion() {
     if (state.wpos >= state.wordIndices.length) return;
@@ -335,17 +360,14 @@
     
     if (isCorrect) {
       state.ok++; 
-      // 次の単語、またはテキスト末尾までidxを進める
       state.wpos++;
       if (state.wpos < state.wordIndices.length) {
         state.idx = state.tokens[state.wordIndices[state.wpos]].start;
       } else {
         state.idx = state.text.length;
       }
-      
       btn.classList.add('good');
       setTimeout(() => { 
-        state.reveal = false; 
         if (state.wpos < state.wordIndices.length) makeQuizQuestion(); 
         save(); updateUI(); 
       }, 150);
@@ -360,7 +382,6 @@
   function updateUI() {
     const total = state.mode === 'dictation' ? state.text.length : state.wordIndices.length;
     const currentProgress = state.mode === 'dictation' ? state.idx : state.wpos;
-    
     el.progressBar.style.width = (currentProgress / (total || 1) * 100) + "%";
 
     const curCharIdx = state.idx;
@@ -395,14 +416,33 @@
     return true;
   }
 
+  // 長押し制御：キーボードへの干渉を徹底排除
+  const setReveal = (v, e) => {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    isRevealing = v;
+    state.reveal = v;
+    updateUI();
+  };
+
+  el.revealBtn.addEventListener('touchstart', (e) => setReveal(true, e), {passive: false});
+  el.revealBtn.addEventListener('touchend', (e) => setReveal(false, e), {passive: false});
+  el.revealBtn.addEventListener('mousedown', (e) => setReveal(true, e));
+  el.revealBtn.addEventListener('mouseup', (e) => setReveal(false, e));
+  el.revealBtn.addEventListener('mouseleave', () => setReveal(false));
+
+  el.displayPanel.onclick = () => {
+    if (state.mode === 'dictation' && !isRevealing) el.hiddenInput.focus();
+  };
+
   document.getElementById('resetBtn').onclick = () => {
     state.idx = 0; state.wpos = 0; state.ok = 0; state.ng = 0;
     if (state.mode === 'quiz') {
         if(state.wordIndices.length > 0) state.idx = state.tokens[state.wordIndices[0]].start;
         makeQuizQuestion();
-    } else {
-        skipWS();
-    }
+    } else skipWS();
     updateUI();
   };
 
@@ -414,15 +454,6 @@
       initModeUI();
     } else alert("保存データがありません");
   };
-
-  const setReveal = (v) => { state.reveal = v; updateUI(); };
-  el.revealBtn.onmousedown = el.revealBtn.ontouchstart = (e) => { 
-    if(e.type === 'touchstart') { // タップでキーボードを出す補助
-        if(state.mode === 'dictation') el.hiddenInput.focus();
-    }
-    setReveal(true); 
-  };
-  el.revealBtn.onmouseup = el.revealBtn.ontouchend = el.revealBtn.onmouseleave = () => setReveal(false);
 
 })();
 </script>
